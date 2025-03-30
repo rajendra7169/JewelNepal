@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "811753341316",
+    "project_id": "jewelneapl",
+    "storage_bucket": "jewelneapl.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:811753341316:android:9f1e38e6a3575d3d579dd1",
+        "android_client_info": {
+          "package_name": "com.example.jewelry_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMF7kcWor2RxauifY0-BI6KSvMc82zG3k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
