@@ -28,6 +28,16 @@ class _RateScreenState extends State<RateScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+
+    // Add listener to hide buttons when on History tab
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging ||
+          _tabController.animation!.value != _tabController.index) {
+        setState(() {
+          // This ensures UI updates when tab changes
+        });
+      }
+    });
   }
 
   @override
@@ -74,59 +84,62 @@ class _RateScreenState extends State<RateScreen>
           const HistoryTab(),
         ],
       ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          // Edit button - positioned above Add button
-          if (!_isEditMode) // Only show when not in edit mode
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: FloatingActionButton(
-                heroTag: "editBtn",
-                backgroundColor: const Color(
-                  0xFF0D47A1,
-                ), // Same color as add button
-                onPressed: () {
-                  setState(() {
-                    _isEditMode = true;
-                    // Send message to CurrentRatesTab
-                    _currentRatesTabKey.currentState?.setEditMode(true);
-                  });
-                },
-                child: const Icon(
-                  Icons.edit,
-                  color: Colors.white,
-                ), // White icon
-              ),
-            ),
+      floatingActionButton:
+          _tabController.index == 0
+              ? Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  // Edit button - positioned above Add button
+                  if (!_isEditMode) // Only show when not in edit mode
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: FloatingActionButton(
+                        heroTag: "editBtn",
+                        backgroundColor: const Color(
+                          0xFF0D47A1,
+                        ), // Same color as add button
+                        onPressed: () {
+                          setState(() {
+                            _isEditMode = true;
+                            // Send message to CurrentRatesTab
+                            _currentRatesTabKey.currentState?.setEditMode(true);
+                          });
+                        },
+                        child: const Icon(
+                          Icons.edit,
+                          color: Colors.white,
+                        ), // White icon
+                      ),
+                    ),
 
-          // Save button - shown during edit mode
-          if (_isEditMode)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: FloatingActionButton(
-                heroTag: "saveBtn",
-                backgroundColor: Colors.green,
-                onPressed: () {
-                  // Call save method in CurrentRatesTab
-                  _currentRatesTabKey.currentState?.saveChanges();
-                  setState(() {
-                    _isEditMode = false;
-                  });
-                },
-                child: const Icon(Icons.check, color: Colors.white),
-              ),
-            ),
+                  // Save button - shown during edit mode
+                  if (_isEditMode)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: FloatingActionButton(
+                        heroTag: "saveBtn",
+                        backgroundColor: Colors.green,
+                        onPressed: () {
+                          // Call save method in CurrentRatesTab
+                          _currentRatesTabKey.currentState?.saveChanges();
+                          setState(() {
+                            _isEditMode = false;
+                          });
+                        },
+                        child: const Icon(Icons.check, color: Colors.white),
+                      ),
+                    ),
 
-          // Regular add button
-          FloatingActionButton(
-            heroTag: "addBtn",
-            backgroundColor: const Color(0xFF0D47A1),
-            onPressed: () => _showAddMetalDialog(context),
-            child: const Icon(Icons.add, color: Colors.white),
-          ),
-        ],
-      ),
+                  // Regular add button
+                  FloatingActionButton(
+                    heroTag: "addBtn",
+                    backgroundColor: const Color(0xFF0D47A1),
+                    onPressed: () => _showAddMetalDialog(context),
+                    child: const Icon(Icons.add, color: Colors.white),
+                  ),
+                ],
+              )
+              : null, // Return null for History tab
     );
   }
 
@@ -913,80 +926,948 @@ class HistoryTab extends StatefulWidget {
 
 class _HistoryTabState extends State<HistoryTab> {
   // Date range for filtering
-  DateTimeRange? _selectedDateRange;
+  DateTime _selectedDate = DateTime.now();
+  Map<String, List<ChartData>> _chartDataByType = {};
+  List<Color> _chartColors = [
+    Colors.blue,
+    Colors.red,
+    Colors.green,
+    Colors.purple,
+    Colors.orange,
+    Colors.teal,
+    Colors.pink,
+    Colors.amber,
+    Colors.indigo,
+    Colors.cyan,
+    Colors.deepOrange,
+    Colors.lime,
+    Colors.lightBlue,
+    Colors.deepPurple,
+    Colors.brown,
+    Colors.indigoAccent,
+    Colors.lightGreen,
+    Colors.redAccent,
+  ];
+  bool _isLoading = true;
+  double _maxY = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize with 15 days data
+    _fetchPriceHistoryData();
+  }
+
+  Future<void> _fetchPriceHistoryData() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Calculate date range
+      final DateTime endDate = DateTime.now();
+      final DateTime startDate = endDate.subtract(const Duration(days: 15));
+
+      // First get metal types to reduce query load
+      final typesSnapshot =
+          await FirebaseFirestore.instance.collection('metals').get();
+
+      if (typesSnapshot.docs.isEmpty) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Get unique metal names to query
+      Set<String> uniqueMetalNames = {};
+      for (var doc in typesSnapshot.docs) {
+        uniqueMetalNames.add(doc['name'] as String);
+      }
+
+      // Process in smaller batches to avoid timeouts
+      Map<String, List<ChartData>> chartData = {};
+      double maxPrice = 0;
+
+      // Process in batches of 5 metals at a time
+      List<String> metalNamesList = uniqueMetalNames.toList();
+      for (int i = 0; i < metalNamesList.length; i += 5) {
+        int end =
+            (i + 5 < metalNamesList.length) ? i + 5 : metalNamesList.length;
+        List<String> batch = metalNamesList.sublist(i, end);
+
+        // Process each metal in the batch
+        for (String metalName in batch) {
+          try {
+            QuerySnapshot snapshot =
+                await FirebaseFirestore.instance
+                    .collection('metals')
+                    .where('name', isEqualTo: metalName)
+                    .orderBy('timestamp', descending: false)
+                    .get();
+
+            List<ChartData> dataPoints = [];
+
+            for (var doc in snapshot.docs) {
+              final data = doc.data() as Map<String, dynamic>;
+              if (data['timestamp'] != null) {
+                final timestamp = data['timestamp'] as Timestamp;
+                final date = timestamp.toDate();
+
+                if (date.isAfter(startDate) &&
+                    date.isBefore(endDate.add(const Duration(days: 1)))) {
+                  final price = (data['price'] as num).toDouble();
+                  if (price > maxPrice) maxPrice = price;
+
+                  dataPoints.add(
+                    ChartData(
+                      DateFormat('MM/dd').format(date),
+                      price,
+                      timestamp,
+                    ),
+                  );
+                }
+              }
+            }
+
+            if (dataPoints.isNotEmpty) {
+              chartData[metalName] = dataPoints;
+            }
+          } catch (e) {
+            print('Error fetching history for $metalName: $e');
+          }
+        }
+      }
+
+      setState(() {
+        _chartDataByType = chartData;
+        _maxY = maxPrice > 0 ? maxPrice * 1.1 : 100000;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error fetching price history: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     // Get screen dimensions
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 400;
+    final isTablet = screenWidth > 600;
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
-    return StreamBuilder<QuerySnapshot>(
-      stream:
-          FirebaseFirestore.instance
-              .collection('metals')
-              .orderBy('timestamp', descending: false)
-              .snapshots(),
-      builder: (context, snapshot) {
-        // Rest of the function remains unchanged
-        // ...
+    final formattedSelectedDate = DateFormat(
+      'MMMM d, yyyy',
+    ).format(_selectedDate);
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            return SafeArea(
-              bottom: true,
-              child: Padding(
-                padding: EdgeInsets.all(isMobile ? 6.0 : 12.0),
-                child: Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SafeArea(
+          bottom: true,
+          child: Padding(
+            padding: EdgeInsets.all(isMobile ? 6.0 : 12.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title and date selection
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Date range selection bar - make more compact
-                    Container(
-                      padding: EdgeInsets.all(isMobile ? 8 : 10),
-                      decoration: BoxDecoration(
-                        color: isDarkMode ? Colors.grey[800] : Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          if (!isDarkMode)
-                            BoxShadow(
-                              color: Colors.grey.withOpacity(0.2),
-                              spreadRadius: 1,
-                              blurRadius: 3,
-                            ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          // Rest of the content remains unchanged
-                          // ...
-                        ],
+                    Text(
+                      'Price Trend (15 Days)',
+                      style: TextStyle(
+                        fontSize: isMobile ? 16 : 18,
+                        fontWeight: FontWeight.bold,
+                        color:
+                            isDarkMode ? Colors.white : Colors.indigo.shade800,
                       ),
                     ),
-                    // Rest of the content remains unchanged
-                    // ...
-
-                    // Chart area - use fixed height instead of Expanded
-                    SizedBox(
-                      height: constraints.maxHeight - (isMobile ? 150 : 180),
-                      child: LineChart(
-                        LineChartData(
-                          // Add your LineChartData configuration here
-                          lineBarsData: [],
-                        ),
-                        // LineChart configuration remains unchanged
-                        // ...
-                      ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh'),
+                      onPressed: _fetchPriceHistoryData,
                     ),
-
-                    // Reduced bottom padding
-                    const SizedBox(height: 8),
                   ],
                 ),
-              ),
-            );
-          },
+
+                const SizedBox(height: 8),
+
+                // Chart area
+                Container(
+                  height: isMobile ? 220 : (isTablet ? 300 : 260),
+                  decoration: BoxDecoration(
+                    color:
+                        isDarkMode
+                            ? Colors.grey.shade800.withOpacity(0.5)
+                            : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        spreadRadius: 1,
+                        blurRadius: 5,
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.only(
+                    right: 16,
+                    left: 6,
+                    top: 20,
+                    bottom: 12,
+                  ),
+                  child:
+                      _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _chartDataByType.isEmpty
+                          ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.timeline_outlined,
+                                  size: 48,
+                                  color:
+                                      isDarkMode
+                                          ? Colors.white70
+                                          : Colors.grey.shade400,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'No price history data available',
+                                  style: TextStyle(
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white60
+                                            : Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                          : LineChart(
+                            LineChartData(
+                              gridData: FlGridData(
+                                show: true,
+                                drawVerticalLine: true,
+                                horizontalInterval: _maxY / 5,
+                                verticalInterval: 1,
+                                getDrawingHorizontalLine: (value) {
+                                  return FlLine(
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white.withOpacity(0.1)
+                                            : Colors.grey.withOpacity(0.2),
+                                    strokeWidth: 1,
+                                  );
+                                },
+                                getDrawingVerticalLine: (value) {
+                                  return FlLine(
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white.withOpacity(0.1)
+                                            : Colors.grey.withOpacity(0.2),
+                                    strokeWidth: 1,
+                                  );
+                                },
+                              ),
+                              titlesData: FlTitlesData(
+                                show: true,
+                                rightTitles: AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                                topTitles: AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                                bottomTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    reservedSize: 30,
+                                    interval: 1,
+                                    getTitlesWidget: (value, meta) {
+                                      // Only show every 3rd label on mobile to prevent overlap
+                                      if (isMobile &&
+                                          value.toInt() % 3 != 0 &&
+                                          value.toInt() != 0) {
+                                        return const SizedBox();
+                                      }
+
+                                      // Find the first type with data
+                                      final firstType =
+                                          _chartDataByType.keys.first;
+                                      final dataList =
+                                          _chartDataByType[firstType]!;
+
+                                      if (value.toInt() >= 0 &&
+                                          value.toInt() < dataList.length) {
+                                        return Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 8.0,
+                                          ),
+                                          child: Transform.rotate(
+                                            angle: isMobile ? -0.5 : 0,
+                                            child: Text(
+                                              dataList[value.toInt()].date,
+                                              style: TextStyle(
+                                                color:
+                                                    isDarkMode
+                                                        ? Colors.white70
+                                                        : Colors.grey.shade700,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isMobile ? 9 : 10,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return const SizedBox();
+                                    },
+                                  ),
+                                ),
+                                leftTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    interval: _maxY / 5,
+                                    getTitlesWidget: (value, meta) {
+                                      return Text(
+                                        '₹${value.toInt()}',
+                                        style: TextStyle(
+                                          color:
+                                              isDarkMode
+                                                  ? Colors.white70
+                                                  : Colors.grey.shade700,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 10,
+                                        ),
+                                      );
+                                    },
+                                    reservedSize: 42,
+                                  ),
+                                ),
+                              ),
+                              borderData: FlBorderData(
+                                show: true,
+                                border: Border.all(
+                                  color:
+                                      isDarkMode
+                                          ? Colors.white10
+                                          : Colors.grey.shade200,
+                                ),
+                              ),
+                              minX: 0,
+                              maxX:
+                                  _chartDataByType.isNotEmpty
+                                      ? _chartDataByType[_chartDataByType
+                                                  .keys
+                                                  .first]!
+                                              .length
+                                              .toDouble() -
+                                          1
+                                      : 15,
+                              minY: 0,
+                              maxY: _maxY,
+                              lineTouchData: LineTouchData(
+                                touchTooltipData: LineTouchTooltipData(
+                                  tooltipBgColor:
+                                      isDarkMode
+                                          ? Colors.grey.shade800.withOpacity(
+                                            0.8,
+                                          )
+                                          : Colors.white.withOpacity(0.8),
+                                  tooltipRoundedRadius: 8,
+                                  getTooltipItems: (
+                                    List<LineBarSpot> touchedSpots,
+                                  ) {
+                                    return touchedSpots.map((spot) {
+                                      // Find which metal type this spot belongs to
+                                      String? metalType;
+                                      for (var entry
+                                          in _chartDataByType.entries) {
+                                        if (_chartDataByType.keys
+                                                .toList()
+                                                .indexOf(entry.key) ==
+                                            spot.barIndex) {
+                                          metalType = entry.key;
+                                          break;
+                                        }
+                                      }
+
+                                      if (metalType != null) {
+                                        final color =
+                                            _chartColors[spot.barIndex %
+                                                _chartColors.length];
+                                        return LineTooltipItem(
+                                          '$metalType: ₹${spot.y.toInt()}',
+                                          TextStyle(
+                                            color: color,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        );
+                                      }
+                                      return null;
+                                    }).toList();
+                                  },
+                                ),
+                              ),
+                              lineBarsData: _buildLineBarsData(),
+                            ),
+                          ),
+                ),
+
+                // Legend for chart lines
+                if (_chartDataByType.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      children:
+                          _chartDataByType.keys.map((type) {
+                            final colorIndex = _chartDataByType.keys
+                                .toList()
+                                .indexOf(type);
+                            final color =
+                                _chartColors[colorIndex % _chartColors.length];
+
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: color.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: color.withOpacity(0.5),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    type,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color:
+                                          isDarkMode
+                                              ? Colors.white
+                                              : Colors.black87,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                    ),
+                  ),
+
+                // Date selector
+                Expanded(
+                  child: Container(
+                    padding: EdgeInsets.all(isMobile ? 10 : 16),
+                    margin: const EdgeInsets.only(top: 8),
+                    decoration: BoxDecoration(
+                      color: isDarkMode ? Colors.grey.shade800 : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          spreadRadius: 1,
+                          blurRadius: 5,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Title and date picker row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Historical Prices',
+                              style: TextStyle(
+                                fontSize: isMobile ? 14 : 16,
+                                fontWeight: FontWeight.bold,
+                                color:
+                                    isDarkMode ? Colors.white : Colors.black87,
+                              ),
+                            ),
+
+                            // Date selector
+                            InkWell(
+                              onTap: () async {
+                                final DateTime? picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: _selectedDate,
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime.now(),
+                                  builder: (context, child) {
+                                    return Theme(
+                                      data: ThemeData.light().copyWith(
+                                        colorScheme: const ColorScheme.light(
+                                          primary: Color(0xFF0D47A1),
+                                          onPrimary: Colors.white,
+                                        ),
+                                      ),
+                                      child: child!,
+                                    );
+                                  },
+                                );
+                                if (picked != null && picked != _selectedDate) {
+                                  setState(() {
+                                    _selectedDate = picked;
+                                  });
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(
+                                    0xFF0D47A1,
+                                  ).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFF0D47A1,
+                                    ).withOpacity(0.3),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.calendar_today,
+                                      size: 16,
+                                      color:
+                                          isDarkMode
+                                              ? Colors.blue.shade300
+                                              : const Color(0xFF0D47A1),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      formattedSelectedDate,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        color:
+                                            isDarkMode
+                                                ? Colors.blue.shade300
+                                                : const Color(0xFF0D47A1),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // Historical prices with FutureBuilder instead of StreamBuilder for better control
+                        Expanded(
+                          child: FutureBuilder<QuerySnapshot>(
+                            // Filter query by the selected date
+                            future: () {
+                              // Create date range for the selected date (start of day to end of day)
+                              final startOfDay = DateTime(
+                                _selectedDate.year,
+                                _selectedDate.month,
+                                _selectedDate.day,
+                              );
+                              final endOfDay = DateTime(
+                                _selectedDate.year,
+                                _selectedDate.month,
+                                _selectedDate.day,
+                                23,
+                                59,
+                                59,
+                                999,
+                              );
+
+                              // Convert to Firestore timestamps
+                              final startTimestamp = Timestamp.fromDate(
+                                startOfDay,
+                              );
+                              final endTimestamp = Timestamp.fromDate(endOfDay);
+
+                              return FirebaseFirestore.instance
+                                  .collection('metals')
+                                  .orderBy('timestamp', descending: false)
+                                  .where(
+                                    'timestamp',
+                                    isGreaterThanOrEqualTo: startTimestamp,
+                                  )
+                                  .where(
+                                    'timestamp',
+                                    isLessThanOrEqualTo: endTimestamp,
+                                  )
+                                  .get();
+                            }(),
+                            builder: (context, snapshot) {
+                              // Loading state
+                              if (snapshot.connectionState ==
+                                  ConnectionState.waiting) {
+                                return const Center(
+                                  child: CircularProgressIndicator(),
+                                );
+                              }
+
+                              // Error handling
+                              if (snapshot.hasError) {
+                                print(
+                                  "Error loading historical prices: ${snapshot.error}",
+                                );
+                                return Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline,
+                                        color: Colors.red,
+                                        size: 48,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'Error loading data: ${snapshot.error.toString().split(']').last}',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      ElevatedButton.icon(
+                                        onPressed: () => setState(() {}),
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('Retry'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF0D47A1,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+
+                              // No data state - specifically for selected date
+                              if (!snapshot.hasData ||
+                                  snapshot.data!.docs.isEmpty) {
+                                return Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.calendar_today,
+                                        size: 64,
+                                        color:
+                                            isDarkMode
+                                                ? Colors.white60
+                                                : Colors.grey.shade400,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'No price history found for ${DateFormat('MMMM d, yyyy').format(_selectedDate)}',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          color:
+                                              isDarkMode
+                                                  ? Colors.white70
+                                                  : Colors.grey.shade700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      ElevatedButton.icon(
+                                        onPressed: () {
+                                          // Reset to today's date
+                                          setState(() {
+                                            _selectedDate = DateTime.now();
+                                          });
+                                        },
+                                        icon: const Icon(Icons.today),
+                                        label: const Text(
+                                          "View Today's Prices",
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF0D47A1,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+
+                              // Rest of your existing code for displaying data
+                              final metals = snapshot.data!.docs;
+
+                              // Group metals by type
+                              Map<String, List<DocumentSnapshot>>
+                              groupedMetals = {};
+                              for (var metal in metals) {
+                                final data =
+                                    metal.data() as Map<String, dynamic>;
+                                final type = data['type'] as String? ?? 'Other';
+                                if (!groupedMetals.containsKey(type)) {
+                                  groupedMetals[type] = [];
+                                }
+                                groupedMetals[type]!.add(metal);
+                              }
+
+                              // Create scrollable list of metal types and prices
+                              return ListView(
+                                children:
+                                    groupedMetals.entries.map((entry) {
+                                      return Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          // Type header
+                                          Container(
+                                            margin: const EdgeInsets.only(
+                                              bottom: 8,
+                                              top: 12,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 2,
+                                              horizontal: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: _getColorForType(
+                                                entry.key,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              entry.key,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+
+                                          // Metal price cards with wrapping layout
+                                          Wrap(
+                                            spacing: 10,
+                                            runSpacing: 10,
+                                            children:
+                                                entry.value.map((doc) {
+                                                  final data =
+                                                      doc.data()
+                                                          as Map<
+                                                            String,
+                                                            dynamic
+                                                          >;
+                                                  return _buildHistoricalPriceCard(
+                                                    data['name'] as String,
+                                                    data['price'] as num,
+                                                    data['timestamp']
+                                                        as Timestamp?,
+                                                    _getColorForType(
+                                                      entry.key,
+                                                      opacity: 0.1,
+                                                    ),
+                                                    isTablet
+                                                        ? 160
+                                                        : (isMobile
+                                                            ? 140
+                                                            : 180),
+                                                  );
+                                                }).toList(),
+                                          ),
+
+                                          const SizedBox(height: 8),
+                                        ],
+                                      );
+                                    }).toList(),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
+    );
+  }
+
+  List<LineChartBarData> _buildLineBarsData() {
+    List<LineChartBarData> result = [];
+    int colorIndex = 0;
+
+    _chartDataByType.forEach((type, dataPoints) {
+      final spots = <FlSpot>[];
+
+      // Convert data points to spots
+      for (int i = 0; i < dataPoints.length; i++) {
+        spots.add(FlSpot(i.toDouble(), dataPoints[i].price));
+      }
+
+      final barData = LineChartBarData(
+        spots: spots,
+        isCurved: true,
+        curveSmoothness: 0.3,
+        color: _chartColors[colorIndex % _chartColors.length],
+        barWidth: 3,
+        isStrokeCapRound: true,
+        dotData: FlDotData(
+          show: !spots.contains(null),
+          getDotPainter: (spot, percent, barData, index) {
+            return FlDotCirclePainter(
+              radius: 4,
+              color: _chartColors[colorIndex % _chartColors.length],
+              strokeWidth: 1,
+              strokeColor: Colors.white,
+            );
+          },
+        ),
+        belowBarData: BarAreaData(
+          show: true,
+          color: _chartColors[colorIndex % _chartColors.length].withOpacity(
+            0.15,
+          ),
+        ),
+      );
+
+      result.add(barData);
+      colorIndex++;
+    });
+
+    return result;
+  }
+
+  Color _getColorForType(String type, {double opacity = 1.0}) {
+    switch (type.toLowerCase()) {
+      case 'gold':
+        return Colors.amber.withOpacity(opacity);
+      case 'silver':
+        return Colors.blueGrey.withOpacity(opacity);
+      case 'platinum':
+        return Colors.grey.shade700.withOpacity(opacity);
+      case 'diamond':
+        return Colors.lightBlueAccent.withOpacity(opacity);
+      default:
+        return const Color(0xFF0D47A1).withOpacity(opacity);
+    }
+  }
+
+  Widget _buildHistoricalPriceCard(
+    String name,
+    num price,
+    Timestamp? timestamp,
+    Color bgColor,
+    double width,
+  ) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final NumberFormat currencyFormat = NumberFormat.currency(
+      symbol: '₹',
+      decimalDigits: 0,
+    );
+
+    // Calculate how many days ago this price was recorded
+    String timeAgo = '';
+    if (timestamp != null) {
+      final now = DateTime.now();
+      final difference = now.difference(timestamp.toDate());
+
+      if (difference.inDays == 0) {
+        timeAgo = "Today";
+      } else if (difference.inDays == 1) {
+        timeAgo = "Yesterday";
+      } else {
+        timeAgo = "${difference.inDays} days ago";
+      }
+    }
+
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDarkMode ? Colors.grey.shade800.withOpacity(0.5) : bgColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade300,
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Metal name
+          Text(
+            name,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: isDarkMode ? Colors.white : Colors.black87,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+
+          const SizedBox(height: 6),
+
+          // Price
+          Text(
+            currencyFormat.format(price),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: isDarkMode ? Colors.white : Colors.black,
+            ),
+          ),
+
+          const SizedBox(height: 4),
+
+          // Timestamp
+          if (timestamp != null)
+            Row(
+              children: [
+                Icon(
+                  Icons.access_time,
+                  size: 12,
+                  color: isDarkMode ? Colors.white60 : Colors.grey.shade600,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  timeAgo,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isDarkMode ? Colors.white60 : Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 }

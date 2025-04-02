@@ -8,6 +8,37 @@ import 'screens/dashboard/home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase first
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Handle App Check based on platform and environment
+  try {
+    if (kIsWeb) {
+      // For web - completely disable App Check during development
+      await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(false);
+    } else {
+      // For mobile platforms - use debug provider
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: AndroidProvider.debug,
+        appleProvider: AppleProvider.debug,
+      );
+    }
+  } catch (e) {
+    print('AppCheck initialization error (continuing anyway): $e');
+    // Continue without app check if it fails - helps development
+  }
+
+  // Load theme preferences
+  final prefs = await SharedPreferences.getInstance();
+  final savedThemeMode = prefs.getBool('isDarkMode') ?? false;
+  ThemeController()._isDarkMode = savedThemeMode;
+
+  runApp(const MyApp());
+}
+
 // Global theme controller
 class ThemeController with ChangeNotifier {
   static final ThemeController _instance = ThemeController._internal();
@@ -19,57 +50,18 @@ class ThemeController with ChangeNotifier {
 
   void toggleTheme() {
     _isDarkMode = !_isDarkMode;
-    _savePreference();
+    _saveThemePreference();
     notifyListeners();
   }
 
-  Future<void> loadPreference() async {
+  Future<void> _saveThemePreference() async {
     final prefs = await SharedPreferences.getInstance();
-    _isDarkMode = prefs.getBool('isDarkMode') ?? false;
-    notifyListeners();
+    await prefs.setBool('isDarkMode', _isDarkMode);
   }
-
-  Future<void> _savePreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setBool('isDarkMode', _isDarkMode);
-  }
-}
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize Firebase with platform-specific configuration
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print("Firebase initialized successfully");
-
-    // Use a real reCAPTCHA key for web
-    if (kIsWeb) {
-      await FirebaseAppCheck.instance.activate(
-        webProvider: ReCaptchaV3Provider('{your_recaptcha_v3_site_key}'),
-      );
-    } else {
-      await FirebaseAppCheck.instance.activate(
-        androidProvider: AndroidProvider.debug,
-        appleProvider: AppleProvider.appAttest,
-      );
-    }
-  } catch (e) {
-    print("Firebase initialization error: $e");
-  }
-
-  // Load theme preference
-  await ThemeController().loadPreference();
-
-  runApp(const MyApp());
 }
 
 class MyApp extends StatefulWidget {
-  final bool isFirebaseInitialized;
-
-  const MyApp({super.key, this.isFirebaseInitialized = false});
+  const MyApp({super.key});
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -81,21 +73,9 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    _themeController.addListener(_onThemeChanged);
-  }
-
-  void _onThemeChanged() {
-    if (mounted) {
-      setState(() {
-        // Just trigger a rebuild, don't reload auth state
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _themeController.removeListener(_onThemeChanged);
-    super.dispose();
+    _themeController.addListener(() {
+      setState(() {});
+    });
   }
 
   @override
@@ -104,87 +84,27 @@ class _MyAppState extends State<MyApp> {
       title: 'JewelNepal',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.indigo,
-        brightness: Brightness.light,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0D47A1),
+          brightness:
+              _themeController.isDarkMode ? Brightness.dark : Brightness.light,
+        ),
         useMaterial3: true,
       ),
-      darkTheme: ThemeData(
-        primarySwatch: Colors.indigo,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        cardColor: const Color(0xFF1E1E1E),
-        useMaterial3: true,
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasData) {
+            return const HomeScreen();
+          }
+
+          return const LoginScreen();
+        },
       ),
-      themeMode: _themeController.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      home: const AuthWrapper(),
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/home': (context) => const HomeScreen(),
-      },
     );
-  }
-}
-
-class AuthStateProvider extends InheritedWidget {
-  final bool isLoading;
-  final User? currentUser;
-
-  const AuthStateProvider({
-    required Widget child,
-    required this.isLoading,
-    required this.currentUser,
-    Key? key,
-  }) : super(key: key, child: child);
-
-  @override
-  bool updateShouldNotify(AuthStateProvider oldWidget) {
-    return isLoading != oldWidget.isLoading ||
-        currentUser != oldWidget.currentUser;
-  }
-
-  static AuthStateProvider? of(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<AuthStateProvider>();
-  }
-}
-
-class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        } else {
-          User? user = snapshot.data;
-          return AuthStateProvider(
-            isLoading: snapshot.connectionState == ConnectionState.waiting,
-            currentUser: user,
-            child: const AppHomeWrapper(),
-          );
-        }
-      },
-    );
-  }
-}
-
-class AppHomeWrapper extends StatelessWidget {
-  const AppHomeWrapper({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final authState = AuthStateProvider.of(context);
-
-    if (authState == null || authState.isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    if (authState.currentUser == null) {
-      return const LoginScreen();
-    }
-
-    return const HomeScreen();
   }
 }
