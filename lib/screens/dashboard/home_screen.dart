@@ -7,6 +7,7 @@ import '../auth/login_screen.dart';
 import '../../main.dart'; // Import for ThemeController
 import '../dashboard/analytics_screen.dart'; // Add this import
 import '../dashboard/rate_screen.dart'; // Add this import
+import '../sales/new_sale_screen.dart'; // Add this import
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -347,7 +348,17 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: [
-        _buildActionButton(Icons.add, 'New Sale', Colors.green),
+        _buildActionButton(
+          Icons.add,
+          'New Sale',
+          Colors.green,
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const NewSaleScreen()),
+            );
+          },
+        ),
         _buildActionButton(
           Icons.monetization_on,
           'Rate',

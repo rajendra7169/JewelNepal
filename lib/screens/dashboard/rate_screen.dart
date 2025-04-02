@@ -29,14 +29,10 @@ class _RateScreenState extends State<RateScreen>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
 
-    // Add listener to hide buttons when on History tab
+    // Replace the existing listener with this more reliable one
     _tabController.addListener(() {
-      if (_tabController.indexIsChanging ||
-          _tabController.animation!.value != _tabController.index) {
-        setState(() {
-          // This ensures UI updates when tab changes
-        });
-      }
+      // Always update UI when tab controller changes - fixes mobile issue
+      setState(() {});
     });
   }
 
@@ -84,13 +80,15 @@ class _RateScreenState extends State<RateScreen>
           const HistoryTab(),
         ],
       ),
+      // Make the condition more explicit to ensure it works on mobile
       floatingActionButton:
           _tabController.index == 0
               ? Column(
+                // Only show buttons in Current Rates tab (index 0)
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  // Edit button - positioned above Add button
-                  if (!_isEditMode) // Only show when not in edit mode
+                  // Edit button
+                  if (!_isEditMode)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: FloatingActionButton(
@@ -112,7 +110,7 @@ class _RateScreenState extends State<RateScreen>
                       ),
                     ),
 
-                  // Save button - shown during edit mode
+                  // Save button
                   if (_isEditMode)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -130,7 +128,7 @@ class _RateScreenState extends State<RateScreen>
                       ),
                     ),
 
-                  // Regular add button
+                  // Add button
                   FloatingActionButton(
                     heroTag: "addBtn",
                     backgroundColor: const Color(0xFF0D47A1),
@@ -139,7 +137,7 @@ class _RateScreenState extends State<RateScreen>
                   ),
                 ],
               )
-              : null, // Return null for History tab
+              : null, // Explicitly hide buttons in History tab (index 1)
     );
   }
 
@@ -755,9 +753,7 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                               Container(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  DateFormat('yyyy, MMM d').format(
-                                    (data['timestamp'] as Timestamp).toDate(),
-                                  ),
+                                  "last updated: ${DateFormat('yyyy, MMM d').format((data['timestamp'] as Timestamp).toDate())}",
                                   style: TextStyle(
                                     fontSize: 9,
                                     color:
@@ -959,6 +955,8 @@ class _HistoryTabState extends State<HistoryTab> {
   }
 
   Future<void> _fetchPriceHistoryData() async {
+    if (!mounted) return; // Add this check at the start
+
     setState(() {
       _isLoading = true;
     });
@@ -971,6 +969,9 @@ class _HistoryTabState extends State<HistoryTab> {
       // First get metal types to reduce query load
       final typesSnapshot =
           await FirebaseFirestore.instance.collection('metals').get();
+
+      // Check if still mounted after each async operation
+      if (!mounted) return;
 
       if (typesSnapshot.docs.isEmpty) {
         setState(() {
@@ -992,6 +993,8 @@ class _HistoryTabState extends State<HistoryTab> {
       // Process in batches of 5 metals at a time
       List<String> metalNamesList = uniqueMetalNames.toList();
       for (int i = 0; i < metalNamesList.length; i += 5) {
+        if (!mounted) return; // Check if still mounted in the loop
+
         int end =
             (i + 5 < metalNamesList.length) ? i + 5 : metalNamesList.length;
         List<String> batch = metalNamesList.sublist(i, end);
@@ -1039,6 +1042,8 @@ class _HistoryTabState extends State<HistoryTab> {
         }
       }
 
+      // Final setState with mounted check
+      if (!mounted) return;
       setState(() {
         _chartDataByType = chartData;
         _maxY = maxPrice > 0 ? maxPrice * 1.1 : 100000;
@@ -1046,6 +1051,7 @@ class _HistoryTabState extends State<HistoryTab> {
       });
     } catch (e) {
       print('Error fetching price history: $e');
+      if (!mounted) return; // Add this check before setState
       setState(() {
         _isLoading = false;
       });
