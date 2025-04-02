@@ -259,15 +259,31 @@ class _LoginScreenState extends State<LoginScreen> {
                 try {
                   setState(() => _isLoading = true);
                   final user = await _authService.signInWithGoogle();
-                  if (user != null) {
+                  if (user != null && mounted) {
                     Navigator.pushReplacementNamed(context, '/home');
+                  } else {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Google login failed. Please try again.",
+                          ),
+                        ),
+                      );
+                    }
                   }
                 } catch (e) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(SnackBar(content: Text(e.toString())));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          "Google login error: ${e.toString().split('] ').last}",
+                        ),
+                      ),
+                    );
+                  }
                 } finally {
-                  setState(() => _isLoading = false);
+                  if (mounted) setState(() => _isLoading = false);
                 }
               },
             ),

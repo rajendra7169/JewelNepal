@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
-import 'package:flutter/material.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -37,6 +36,7 @@ class AuthService {
 
       // Update display name
       await result.user?.updateDisplayName(name);
+      await result.user?.reload(); // Reload user data to refresh displayName
 
       // Store additional user data in Firestore
       await _firestore.collection('users').doc(result.user!.uid).set({
@@ -78,6 +78,9 @@ class AuthService {
           googleProvider,
         );
 
+        // Refresh user data to ensure all profile info is loaded
+        await userCredential.user?.reload();
+
         // Add user to Firestore if new
         if (userCredential.additionalUserInfo?.isNewUser == true) {
           await _firestore
@@ -106,6 +109,9 @@ class AuthService {
         UserCredential userCredential = await _auth.signInWithCredential(
           credential,
         );
+
+        // Refresh user data to ensure all profile info is loaded
+        await userCredential.user?.reload();
 
         // Add user to Firestore if new
         if (userCredential.additionalUserInfo?.isNewUser == true) {
@@ -140,6 +146,9 @@ class AuthService {
           facebookProvider,
         );
 
+        // Refresh user data to ensure all profile info is loaded
+        await userCredential.user?.reload();
+
         // Add user to Firestore if new
         if (userCredential.additionalUserInfo?.isNewUser == true) {
           await _firestore
@@ -171,6 +180,9 @@ class AuthService {
           credential,
         );
 
+        // Refresh user data to ensure all profile info is loaded
+        await userCredential.user?.reload();
+
         // Add user to Firestore if new
         if (userCredential.additionalUserInfo?.isNewUser == true) {
           await _firestore
@@ -191,32 +203,40 @@ class AuthService {
     }
   }
 
-  // Sign out - FIXED METHOD
+  // Sign out - UPDATED METHOD
   Future<void> signOut() async {
     try {
-      // Sign out from Firebase
+      // First, try to sign out from Firebase
       await _auth.signOut();
 
-      // Try to sign out from Google (safely with error handling)
+      // Then safely try to sign out from Google
       try {
-        if (await _googleSignIn.isSignedIn()) {
-          await _googleSignIn.signOut();
-        }
+        // Check if GoogleSignIn is available
+        await _googleSignIn.signOut().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => null,
+        );
       } catch (e) {
+        // Silently ignore Google sign out errors
         debugPrint('Google sign out error: $e');
-        // Don't rethrow - we want to continue even if Google sign out fails
       }
 
-      // Try to log out from Facebook (safely with error handling)
+      // Finally, try to log out from Facebook
       try {
-        await FacebookAuth.instance.logOut();
+        // Check if FacebookAuth is available
+        await FacebookAuth.instance.logOut().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => null,
+        );
       } catch (e) {
+        // Silently ignore Facebook logout errors
         debugPrint('Facebook logout error: $e');
-        // Don't rethrow - we want to continue even if Facebook logout fails
       }
     } catch (e) {
-      debugPrint('Sign out error: $e');
-      rethrow;
+      // Log the error but don't throw it
+      debugPrint('Error during sign out: $e');
+      // Optionally rethrow if you want the UI to handle it
+      // rethrow;
     }
   }
 
