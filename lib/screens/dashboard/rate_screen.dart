@@ -51,6 +51,16 @@ class _RateScreenState extends State<RateScreen>
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
+          unselectedLabelColor:
+              Colors.white70, // Add this line for better visibility
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+          ), // Make active tab bold
+          unselectedLabelStyle: const TextStyle(
+            fontWeight: FontWeight.normal,
+          ), // Normal weight for inactive
+          indicatorWeight:
+              3, // Slightly thicker indicator for better visibility
           tabs: const [
             Tab(icon: Icon(Icons.list), text: 'Current Rates'),
             Tab(icon: Icon(Icons.trending_up), text: 'History'),
@@ -365,88 +375,85 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
           }
         }
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              child: Padding(
-                padding: EdgeInsets.all(isMobile ? 6.0 : 12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        // Use a Column with fixed date header and scrollable content
+        return Column(
+          children: [
+            // Fixed date header (non-scrollable)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                isMobile ? 6.0 : 12.0,
+                isMobile ? 6.0 : 12.0,
+                isMobile ? 6.0 : 12.0,
+                0,
+              ),
+              child: Container(
+                width: double.infinity,
+                height: isMobile ? 38 : 40,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 12 : 16,
+                  vertical: isMobile ? 6 : 8,
+                ),
+                margin: EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D47A1),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Full-width date container
-                    Container(
-                      width: double.infinity,
-                      height: isMobile ? 38 : 40,
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isMobile ? 12 : 16,
-                        vertical: isMobile ? 6 : 8,
-                      ),
-                      margin: EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0D47A1),
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.calendar_today,
-                            color: Colors.white70,
-                            size: isMobile ? 14 : 16,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              dateString,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w500,
-                                fontSize: isMobile ? 11 : 13,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ],
+                    Icon(
+                      Icons.calendar_today,
+                      color: Colors.white70,
+                      size: isMobile ? 14 : 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        dateString,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w500,
+                          fontSize: isMobile ? 11 : 13,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                     ),
+                  ],
+                ),
+              ),
+            ),
 
-                    ...groupedMetals.entries.map((entry) {
-                      return Padding(
-                        padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Type header
-                            Container(
-                              margin: EdgeInsets.only(
-                                bottom: isMobile ? 6 : 10,
-                              ),
-                              padding: EdgeInsets.symmetric(
-                                vertical: 4,
-                                horizontal: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _getIconColorForType(
-                                  entry.key,
-                                ).withOpacity(isDarkMode ? 0.3 : 0.2),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
+            // Scrollable content (metal groups)
+            Expanded(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: EdgeInsets.all(isMobile ? 6.0 : 12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...groupedMetals.entries.map((entry) {
+                        return Padding(
+                          padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Type header - no capsule, just text with icon
+                              Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   _getIconForType(entry.key),
-                                  const SizedBox(width: 6),
+                                  const SizedBox(width: 8),
                                   Text(
                                     entry.key,
                                     style: TextStyle(
-                                      fontSize: isMobile ? 14 : 16,
+                                      fontSize: isMobile ? 16 : 18,
                                       fontWeight: FontWeight.bold,
                                       color:
                                           isDarkMode
@@ -456,41 +463,48 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                                   ),
                                 ],
                               ),
-                            ),
-                            // Enhanced grid layout with analytics-style cards
-                            GridView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: isTablet ? 3 : 2,
-                                    // More width on mobile
-                                    childAspectRatio:
-                                        isMobile ? 1.8 : (isTablet ? 2.2 : 2.0),
-                                    crossAxisSpacing: 15,
-                                    mainAxisSpacing: 15,
-                                  ),
-                              itemCount: entry.value.length,
-                              itemBuilder:
-                                  (context, index) => _buildMetalCard(
-                                    context,
-                                    entry.value[index],
-                                    _getColorForType(entry.key, index),
-                                    isMobile,
-                                    isDarkMode,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                    // Smaller bottom padding to fix overflow
-                    SizedBox(height: isMobile ? 50 : 60),
-                  ],
+                              SizedBox(height: isMobile ? 6 : 8),
+                              // More compact grid for web
+                              GridView.builder(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount:
+                                      isTablet
+                                          ? 5
+                                          : 2, // Increased from 4 to 5 columns for tablet/web
+                                  // More compact cards for web - adjusted aspect ratio for 5 columns
+                                  childAspectRatio:
+                                      isTablet ? 2.2 : (isMobile ? 1.8 : 2.2),
+                                  crossAxisSpacing:
+                                      isTablet
+                                          ? 6
+                                          : 15, // Further reduced from 8 to 6 for tablet
+                                  mainAxisSpacing:
+                                      isTablet
+                                          ? 6
+                                          : 15, // Further reduced from 8 to 6 for tablet
+                                ),
+                                itemCount: entry.value.length,
+                                itemBuilder:
+                                    (context, index) => _buildMetalCard(
+                                      context,
+                                      entry.value[index],
+                                      _getColorForType(entry.key, index),
+                                      isMobile,
+                                      isDarkMode,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                  ),
                 ),
               ),
-            );
-          },
+            ),
+          ],
         );
       },
     );
@@ -509,6 +523,29 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
       decimalDigits: 0,
     );
 
+    // Format the timestamp for "last updated"
+    String lastUpdated = "";
+    if (data['timestamp'] != null) {
+      final timestamp = data['timestamp'] as Timestamp;
+      final now = DateTime.now();
+      final difference = now.difference(timestamp.toDate());
+
+      if (difference.inDays == 0) {
+        // Today
+        if (difference.inHours == 0) {
+          lastUpdated = "${difference.inMinutes} min ago";
+        } else {
+          lastUpdated = "${difference.inHours} hrs ago";
+        }
+      } else if (difference.inDays == 1) {
+        // Yesterday
+        lastUpdated = "Yesterday";
+      } else {
+        // Days ago
+        lastUpdated = "${difference.inDays} days ago";
+      }
+    }
+
     // Initialize controller if in edit mode but not yet set
     if (_isEditMode && !_priceControllers.containsKey(document.id)) {
       _priceControllers[document.id] = TextEditingController(
@@ -516,14 +553,15 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
       );
     }
 
-    // Analytics-style card with icon
+    // More compact card for web
+    final isTablet = MediaQuery.of(context).size.width > 600;
+    final padding = isTablet ? 8.0 : (isMobile ? 12.0 : 10.0);
+
     return Container(
       decoration: BoxDecoration(
         color:
             (_isDarkMode(context)
-                ? cardColor.withOpacity(
-                  _isEditMode ? 0.25 : 0.15,
-                ) // Highlight in edit mode
+                ? cardColor.withOpacity(_isEditMode ? 0.25 : 0.15)
                 : cardColor.withOpacity(_isEditMode ? 0.15 : 0.08)),
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
@@ -533,7 +571,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
             offset: const Offset(0, 4),
           ),
         ],
-        // Add subtle border in edit mode
         border:
             _isEditMode
                 ? Border.all(
@@ -543,27 +580,27 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                 : null,
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(padding),
         child: Row(
           children: [
-            // Icon on the left
+            // Icon on the left - smaller for web
             Container(
-              height: isMobile ? 40 : 50,
-              width: isMobile ? 40 : 50,
+              height: isTablet ? 36 : (isMobile ? 40 : 46),
+              width: isTablet ? 36 : (isMobile ? 40 : 46),
               decoration: BoxDecoration(
                 color:
                     (_isDarkMode(context)
                         ? cardColor.withOpacity(0.2)
                         : cardColor.withOpacity(0.15)),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.monetization_on,
                 color: cardColor,
-                size: isMobile ? 22 : 28,
+                size: isTablet ? 20 : (isMobile ? 22 : 24),
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: isTablet ? 8 : 12),
 
             // Text content
             Expanded(
@@ -571,7 +608,7 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Metal name
+                  // Metal name with delete button
                   Row(
                     children: [
                       Expanded(
@@ -582,7 +619,7 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                                 _isDarkMode(context)
                                     ? Colors.white70
                                     : Colors.grey[700],
-                            fontSize: isMobile ? 12 : 14,
+                            fontSize: isTablet ? 12 : (isMobile ? 12 : 14),
                             fontWeight: FontWeight.w500,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -602,22 +639,22 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                             child: Icon(
                               Icons.delete_outline,
                               color: Colors.red[300],
-                              size: isMobile ? 16 : 18,
+                              size: isTablet ? 14 : (isMobile ? 16 : 18),
                             ),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 4),
+                  SizedBox(height: isTablet ? 2 : 4),
 
-                  // Price input field or text
+                  // Price input field or text with last updated
                   if (_isEditMode)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 6,
-                          horizontal: 12,
+                        padding: EdgeInsets.symmetric(
+                          vertical: isTablet ? 4 : 6,
+                          horizontal: isTablet ? 8 : 12,
                         ),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
@@ -642,7 +679,7 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                             Text(
                               '₹',
                               style: TextStyle(
-                                fontSize: isMobile ? 14 : 16,
+                                fontSize: isTablet ? 13 : (isMobile ? 14 : 16),
                                 fontWeight: FontWeight.bold,
                                 color:
                                     isDarkMode
@@ -657,7 +694,8 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                                 controller: _priceControllers[document.id],
                                 keyboardType: TextInputType.number,
                                 style: TextStyle(
-                                  fontSize: isMobile ? 14 : 16,
+                                  fontSize:
+                                      isTablet ? 13 : (isMobile ? 14 : 16),
                                   fontWeight: FontWeight.bold,
                                   color:
                                       isDarkMode
@@ -680,38 +718,80 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                       ),
                     )
                   else
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Price
-                        Text(
-                          currencyFormat.format(data['price']),
-                          style: TextStyle(
-                            color:
-                                _isDarkMode(context)
-                                    ? Colors.white
-                                    : Colors.grey[800],
-                            fontSize: isMobile ? 16 : 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        // Date
-                        if (data['timestamp'] != null)
-                          Text(
-                            DateFormat(
-                              'MMM d, y',
-                            ).format((data['timestamp'] as Timestamp).toDate()),
-                            style: TextStyle(
-                              fontSize: isMobile ? 10 : 11,
-                              color:
-                                  isDarkMode
-                                      ? Colors.white54
-                                      : Colors.grey[500],
+                    isTablet
+                        ? // Web/tablet layout - price and date with better spacing
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Price on left
+                            Text(
+                              currencyFormat.format(data['price']),
+                              style: TextStyle(
+                                color:
+                                    _isDarkMode(context)
+                                        ? Colors.white
+                                        : Colors.grey[800],
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
+
+                            // Last updated on right with proper alignment
+                            if (data['timestamp'] != null)
+                              Container(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  DateFormat('yyyy, MMM d').format(
+                                    (data['timestamp'] as Timestamp).toDate(),
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        )
+                        : // Mobile layout - price and last updated stacked
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Price in large font
+                            Text(
+                              currencyFormat.format(data['price']),
+                              style: TextStyle(
+                                color:
+                                    _isDarkMode(context)
+                                        ? Colors.white
+                                        : Colors.grey[800],
+                                fontSize: isMobile ? 16 : 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+
+                            // Last updated below price
+                            if (data['timestamp'] != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 3),
+                                child: Text(
+                                  "last updated: ${DateFormat('yyyy, MMM d').format((data['timestamp'] as Timestamp).toDate())}",
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                 ],
               ),
             ),
