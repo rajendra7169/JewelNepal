@@ -7,6 +7,8 @@ import 'screens/auth/login_screen.dart';
 import 'screens/dashboard/home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
+import 'package:provider/provider.dart';
+import 'services/crm_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,30 +82,35 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'JewelNepal',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0D47A1),
-          brightness:
-              _themeController.isDarkMode ? Brightness.dark : Brightness.light,
+    return MultiProvider(
+      providers: [ChangeNotifierProvider(create: (_) => CrmService())],
+      child: MaterialApp(
+        title: 'JewelNepal',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF0D47A1),
+            brightness:
+                _themeController.isDarkMode
+                    ? Brightness.dark
+                    : Brightness.light,
+          ),
+          useMaterial3: true,
         ),
-        useMaterial3: true,
-      ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+        home: StreamBuilder<User?>(
+          stream: FirebaseAuth.instance.authStateChanges(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-          if (snapshot.hasData) {
-            return const HomeScreen();
-          }
+            if (snapshot.hasData) {
+              return const HomeScreen();
+            }
 
-          return const LoginScreen();
-        },
+            return const LoginScreen();
+          },
+        ),
       ),
     );
   }

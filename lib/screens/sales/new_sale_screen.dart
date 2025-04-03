@@ -463,7 +463,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                 ),
               ),
 
-            ..._items.map((item) => _buildItemRow(item, isMobile)).toList(),
+            ..._items.map((item) => _buildItemRow(item, isMobile)),
           ],
         ),
       ),
@@ -1237,7 +1237,7 @@ class _NewSaleScreenState extends State<NewSaleScreen> {
                             .toList(),
                     onChanged:
                         (value) =>
-                            setState(() => _paymentMode = value! as String),
+                            setState(() => _paymentMode = value!),
                     decoration: const InputDecoration(
                       labelText: 'Payment Mode',
                       border: OutlineInputBorder(),

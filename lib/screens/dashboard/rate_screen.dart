@@ -24,16 +24,95 @@ class _RateScreenState extends State<RateScreen>
   final GlobalKey<_CurrentRatesTabState> _currentRatesTabKey =
       GlobalKey<_CurrentRatesTabState>();
 
+  final double _gramsPerTola = 11.6638;
+  List<GoldRateScheme> _goldRateSchemes = [];
+  GoldRateScheme? _selectedScheme;
+  bool _isLoadingSchemes = true;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
 
-    // Replace the existing listener with this more reliable one
     _tabController.addListener(() {
-      // Always update UI when tab controller changes - fixes mobile issue
       setState(() {});
     });
+
+    // Fetch gold rate schemes
+    _fetchGoldRateSchemes();
+  }
+
+  Future<void> _fetchGoldRateSchemes() async {
+    setState(() {
+      _isLoadingSchemes = true;
+    });
+
+    try {
+      final snapshot = await _firestore.collection('gold_schemes').get();
+
+      if (snapshot.docs.isEmpty) {
+        // Create default schemes if none exist
+        await _createDefaultSchemes();
+        final newSnapshot = await _firestore.collection('gold_schemes').get();
+        _goldRateSchemes =
+            newSnapshot.docs
+                .map(
+                  (doc) =>
+                      GoldRateScheme.fromMap({'id': doc.id, ...doc.data()}),
+                )
+                .toList();
+      } else {
+        _goldRateSchemes =
+            snapshot.docs
+                .map(
+                  (doc) =>
+                      GoldRateScheme.fromMap({'id': doc.id, ...doc.data()}),
+                )
+                .toList();
+      }
+
+      if (_goldRateSchemes.isNotEmpty) {
+        _selectedScheme = _goldRateSchemes.first;
+      }
+    } catch (e) {
+      print('Error fetching gold rate schemes: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingSchemes = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _createDefaultSchemes() async {
+    final batch = _firestore.batch();
+
+    // Scheme 1
+    final scheme1Ref = _firestore.collection('gold_schemes').doc();
+    batch.set(scheme1Ref, {
+      'name': 'Scheme 1',
+      'rate24K': 112000, // Default rate per tola
+      'purityFactors': GoldRateScheme.defaultPurityFactors,
+    });
+
+    // Scheme 2
+    final scheme2Ref = _firestore.collection('gold_schemes').doc();
+    batch.set(scheme2Ref, {
+      'name': 'Scheme 2',
+      'rate24K': 114000, // Default rate per tola
+      'purityFactors': GoldRateScheme.defaultPurityFactors,
+    });
+
+    // Custom Scheme
+    final customSchemeRef = _firestore.collection('gold_schemes').doc();
+    batch.set(customSchemeRef, {
+      'name': 'Custom Scheme',
+      'rate24K': 110000, // Default rate per tola
+      'purityFactors': GoldRateScheme.defaultPurityFactors,
+    });
+
+    await batch.commit();
   }
 
   @override
@@ -53,12 +132,34 @@ class _RateScreenState extends State<RateScreen>
         ),
         backgroundColor: const Color(0xFF0D47A1),
         elevation: 4,
+        actions: [
+          if (_tabController.index == 0) // Only show in Current Rates tab
+            Padding(
+              padding: const EdgeInsets.only(right: 12.0),
+              child: TextButton.icon(
+                onPressed: () {
+                  print("Opening scheme dialog");
+                  _showSchemeDialog(context);
+                },
+                icon: const Icon(
+                  Icons.account_balance_wallet,
+                  color: Colors.white,
+                ),
+                label: Text(
+                  _selectedScheme?.name ?? 'Scheme',
+                  style: const TextStyle(fontSize: 12, color: Colors.white),
+                ),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
+            ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
-          unselectedLabelColor:
-              Colors.white70, // Add this line for better visibility
+          unselectedLabelColor: Colors.white70,
           labelStyle: const TextStyle(
             fontWeight: FontWeight.bold,
           ), // Make active tab bold
@@ -146,6 +247,10 @@ class _RateScreenState extends State<RateScreen>
     final TextEditingController priceController = TextEditingController();
     final TextEditingController typeController = TextEditingController();
 
+    // Default to Gold
+    typeController.text = 'Gold';
+    String selectedType = 'Gold';
+
     showDialog(
       context: context,
       builder:
@@ -172,23 +277,37 @@ class _RateScreenState extends State<RateScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: typeController,
+                DropdownButtonFormField<String>(
+                  value: selectedType,
+                  onChanged: (value) {
+                    selectedType = value!;
+                    typeController.text = value;
+                  },
                   decoration: const InputDecoration(
-                    labelText: 'Type (e.g. Gold, Silver)',
+                    labelText: 'Type',
                     prefixIcon: Icon(Icons.style),
                     border: OutlineInputBorder(),
                   ),
+                  items: [
+                    DropdownMenuItem(value: 'Gold', child: Text('Gold')),
+                    DropdownMenuItem(value: 'Silver', child: Text('Silver')),
+                    DropdownMenuItem(value: 'Diamond', child: Text('Diamond')),
+                    DropdownMenuItem(value: 'Stone', child: Text('Stone')),
+                    DropdownMenuItem(value: 'Other', child: Text('Other')),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: priceController,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Price',
-                    prefixIcon: Icon(Icons.currency_rupee),
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText:
+                        selectedType == 'Gold'
+                            ? 'Price (per tola)'
+                            : 'Price (per gram)',
+                    prefixIcon: const Icon(Icons.currency_rupee),
+                    border: const OutlineInputBorder(),
                   ),
                 ),
               ],
@@ -209,15 +328,32 @@ class _RateScreenState extends State<RateScreen>
                 onPressed: () async {
                   if (nameController.text.isNotEmpty &&
                       priceController.text.isNotEmpty) {
+                    final priceValue = int.parse(priceController.text);
+                    final type =
+                        typeController.text.isNotEmpty
+                            ? typeController.text
+                            : 'Other';
+
+                    final isGold = type == 'Gold';
+
+                    // Convert price based on type
+                    final pricePerGram =
+                        isGold
+                            ? (priceValue / _gramsPerTola).round()
+                            : priceValue;
+                    final pricePerTola =
+                        isGold
+                            ? priceValue.toDouble()
+                            : (priceValue * _gramsPerTola);
+
                     await _firestore.collection('metals').add({
                       'name': nameController.text,
-                      'type':
-                          typeController.text.isNotEmpty
-                              ? typeController.text
-                              : 'Other',
-                      'price': int.parse(priceController.text),
+                      'type': type,
+                      'price': pricePerGram,
+                      'pricePerTola': pricePerTola,
                       'timestamp': FieldValue.serverTimestamp(),
                     });
+
                     if (context.mounted) {
                       Navigator.pop(context);
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -234,6 +370,301 @@ class _RateScreenState extends State<RateScreen>
             ],
           ),
     );
+  }
+
+  void _showSchemeDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Select Gold Rate Scheme'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: ListView(
+                shrinkWrap: true,
+                children:
+                    _goldRateSchemes.map((scheme) {
+                      return ListTile(
+                        title: Text(scheme.name),
+                        subtitle: Text(
+                          '24K Gold: ₹${NumberFormat('#,##0').format(scheme.rate24K)}/tola',
+                        ),
+                        selected: _selectedScheme?.id == scheme.id,
+                        leading: Radio<String>(
+                          value: scheme.id,
+                          groupValue: _selectedScheme?.id,
+                          onChanged: (value) {
+                            Navigator.pop(context);
+                            setState(() {
+                              _selectedScheme = _goldRateSchemes.firstWhere(
+                                (s) => s.id == value,
+                              );
+                              _updateGoldRates();
+                            });
+                          },
+                        ),
+                        onTap: () {
+                          Navigator.pop(context);
+                          setState(() {
+                            _selectedScheme = scheme;
+                            _updateGoldRates();
+                          });
+                        },
+                      );
+                    }).toList(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  print("Edit Schemes button pressed");
+                  _showEditSchemeDialog(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0D47A1),
+                ),
+                child: const Text('Edit Schemes'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _showEditSchemeDialog(BuildContext context) {
+    // Get the current selected scheme
+    final selectedScheme = _selectedScheme;
+    if (selectedScheme == null) {
+      print("No scheme selected");
+      return;
+    }
+
+    print("Showing edit dialog for scheme: ${selectedScheme.name}");
+
+    // Create a new context by closing the current dialog first
+    Navigator.of(context).pop();
+
+    // Add this delay to ensure the navigation stack is clear before showing new dialog
+    Future.microtask(() {
+      showDialog(
+        context: context,
+        barrierDismissible: false, // Prevent accidental dismissal
+        builder: (BuildContext newContext) {
+          // Create controllers for the form fields
+          final rateController = TextEditingController(
+            text: selectedScheme.rate24K.toString(),
+          );
+
+          // Purity factor controllers
+          final purityControllers = <String, TextEditingController>{};
+          for (final entry in selectedScheme.purityFactors.entries) {
+            purityControllers[entry.key] = TextEditingController(
+              text: (entry.value * 100).toStringAsFixed(1),
+            );
+          }
+
+          return AlertDialog(
+            title: Text('Edit ${selectedScheme.name}'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '24K Gold Rate (per tola)',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  TextField(
+                    controller: rateController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.currency_rupee),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Purity Percentages',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  ...purityControllers.entries.map((entry) {
+                    if (entry.key == '24K') {
+                      return const SizedBox.shrink(); // Skip 24K
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(width: 50, child: Text(entry.key)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: entry.value,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                suffixText: '%',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(newContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    // Parse rate input
+                    final rateText = rateController.text.trim();
+                    final rate24K =
+                        rateText.isNotEmpty
+                            ? double.tryParse(rateText) ??
+                                selectedScheme.rate24K
+                            : selectedScheme.rate24K;
+
+                    print('Updating with rate: $rate24K');
+
+                    // Update purity factors
+                    final newPurityFactors = <String, double>{
+                      ...selectedScheme.purityFactors,
+                    };
+                    for (final entry in purityControllers.entries) {
+                      if (entry.key == '24K') continue; // Skip 24K
+                      final text = entry.value.text.trim();
+                      final percentage =
+                          text.isNotEmpty
+                              ? double.tryParse(text) ??
+                                  (selectedScheme.purityFactors[entry.key]! *
+                                      100)
+                              : (selectedScheme.purityFactors[entry.key]! *
+                                  100);
+                      newPurityFactors[entry.key] = percentage / 100;
+                    }
+
+                    print('New purity factors: $newPurityFactors');
+
+                    // Update Firestore
+                    await FirebaseFirestore.instance
+                        .collection('gold_schemes')
+                        .doc(selectedScheme.id)
+                        .update({
+                          'rate24K': rate24K,
+                          'purityFactors': newPurityFactors,
+                        });
+
+                    // Close dialog first
+                    Navigator.pop(newContext);
+
+                    // Update local scheme data
+                    final index = _goldRateSchemes.indexWhere(
+                      (s) => s.id == selectedScheme.id,
+                    );
+                    if (index >= 0) {
+                      _goldRateSchemes[index] = GoldRateScheme(
+                        id: selectedScheme.id,
+                        name: selectedScheme.name,
+                        rate24K: rate24K,
+                        purityFactors: newPurityFactors,
+                      );
+                      _selectedScheme = _goldRateSchemes[index];
+                      await _updateGoldRates();
+                    }
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          '${selectedScheme.name} updated successfully',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } catch (e) {
+                    print('Error updating scheme: $e');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error updating scheme: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                child: const Text('Save Changes'),
+              ),
+            ],
+          );
+        },
+      );
+    });
+  }
+
+  Future<void> _updateGoldRates() async {
+    if (_selectedScheme == null) return;
+
+    try {
+      // Get all gold items
+      final goldItemsSnapshot =
+          await _firestore
+              .collection('metals')
+              .where('type', isEqualTo: 'Gold')
+              .get();
+
+      if (goldItemsSnapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+
+      // Update each gold item based on purity
+      for (final doc in goldItemsSnapshot.docs) {
+        final data = doc.data();
+        final name = data['name'] as String;
+
+        // Extract purity (e.g., "Gold 24K" -> "24K")
+        String purity = "24K"; // Default
+        for (final key in _selectedScheme!.purityFactors.keys) {
+          if (name.contains(key)) {
+            purity = key;
+            break;
+          }
+        }
+
+        // Calculate price based on purity
+        double pricePerTola =
+            _selectedScheme!.rate24K *
+            (_selectedScheme!.purityFactors[purity] ?? 1.0);
+        double pricePerGram = pricePerTola / _gramsPerTola;
+
+        batch.update(doc.reference, {
+          'price': pricePerGram.round(),
+          'pricePerTola': pricePerTola.round(),
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gold rates updated using ${_selectedScheme!.name}'),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error updating gold rates: $e')));
+    }
   }
 }
 
@@ -284,25 +715,62 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
     });
   }
 
-  void saveChanges() async {
+  Future<void> saveChanges() async {
     final batch = FirebaseFirestore.instance.batch();
+    final double gramsPerTola = 11.6638;
 
     try {
-      _priceControllers.forEach((id, controller) {
+      // Create a list to hold all the futures
+      final List<Future> updateFutures = [];
+
+      // For each price controller
+      for (final entry in _priceControllers.entries) {
+        final id = entry.key;
+        final controller = entry.value;
+
         if (controller.text.isNotEmpty) {
           final price = int.tryParse(controller.text);
           if (price != null) {
-            final docRef = FirebaseFirestore.instance
-                .collection('metals')
-                .doc(id);
-            batch.update(docRef, {
-              'price': price,
-              'timestamp': FieldValue.serverTimestamp(),
-            });
+            // Add each get operation to our futures list
+            updateFutures.add(
+              FirebaseFirestore.instance
+                  .collection('metals')
+                  .doc(id)
+                  .get()
+                  .then((doc) {
+                    if (!doc.exists) return;
+
+                    final data = doc.data() as Map<String, dynamic>;
+                    final docRef = FirebaseFirestore.instance
+                        .collection('metals')
+                        .doc(id);
+                    final isGold = (data['type'] as String?) == 'Gold';
+
+                    if (isGold) {
+                      final pricePerTola = price.toDouble();
+                      final pricePerGram = pricePerTola / gramsPerTola;
+
+                      batch.update(docRef, {
+                        'price': pricePerGram.round(),
+                        'pricePerTola': pricePerTola,
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                    } else {
+                      batch.update(docRef, {
+                        'price': price,
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                    }
+                  }),
+            );
           }
         }
-      });
+      }
 
+      // Wait for all the database reads to complete
+      await Future.wait(updateFutures);
+
+      // Now commit the batch after all updates are added
       await batch.commit();
 
       if (mounted) {
@@ -328,7 +796,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Get screen width to make layout responsive
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 600;
     final isMobile = screenWidth < 400;
@@ -364,11 +831,9 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
           );
         }
 
-        // Current date display
         final today = DateTime.now();
         final dateString = DateFormat('EEEE, MMMM d, y').format(today);
 
-        // Group metals by type
         Map<String, List<DocumentSnapshot>> groupedMetals = {};
         for (var metal in metals) {
           final data = metal.data() as Map<String, dynamic>;
@@ -378,18 +843,26 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
           }
           groupedMetals[type]!.add(metal);
 
-          // Initialize price controllers if in edit mode
           if (_isEditMode) {
-            _priceControllers[metal.id] = TextEditingController(
-              text: data['price'].toString(),
-            );
+            final data = metal.data() as Map<String, dynamic>;
+            final isGoldType = (data['type'] as String?) == 'Gold';
+            final price = (data['price'] as num).toDouble();
+            final pricePerTola =
+                (data['pricePerTola'] as num?)?.toDouble() ?? (price * 11.6638);
+
+            if (!_priceControllers.containsKey(metal.id)) {
+              _priceControllers[metal.id] = TextEditingController(
+                text:
+                    isGoldType
+                        ? pricePerTola.round().toString()
+                        : price.toString(),
+              );
+            }
           }
         }
 
-        // Use a Column with fixed date header and scrollable content
         return Column(
           children: [
-            // Fixed date header (non-scrollable)
             Padding(
               padding: EdgeInsets.fromLTRB(
                 isMobile ? 6.0 : 12.0,
@@ -440,8 +913,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                 ),
               ),
             ),
-
-            // Scrollable content (metal groups)
             Expanded(
               child: SingleChildScrollView(
                 child: Padding(
@@ -455,7 +926,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Type header - no capsule, just text with icon
                               Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -475,27 +945,19 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                                 ],
                               ),
                               SizedBox(height: isMobile ? 6 : 8),
-                              // More compact grid for web
                               GridView.builder(
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount:
-                                      isTablet
-                                          ? 5
-                                          : 2, // Increased from 4 to 5 columns for tablet/web
-                                  // More compact cards for web - adjusted aspect ratio for 5 columns
-                                  childAspectRatio:
-                                      isTablet ? 2.2 : (isMobile ? 1.8 : 2.2),
-                                  crossAxisSpacing:
-                                      isTablet
-                                          ? 6
-                                          : 15, // Further reduced from 8 to 6 for tablet
-                                  mainAxisSpacing:
-                                      isTablet
-                                          ? 6
-                                          : 15, // Further reduced from 8 to 6 for tablet
-                                ),
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: isTablet ? 5 : 2,
+                                      childAspectRatio:
+                                          isTablet
+                                              ? 2.2
+                                              : (isMobile ? 1.8 : 2.2),
+                                      crossAxisSpacing: isTablet ? 6 : 15,
+                                      mainAxisSpacing: isTablet ? 6 : 15,
+                                    ),
                                 itemCount: entry.value.length,
                                 itemBuilder:
                                     (context, index) => _buildMetalCard(
@@ -509,7 +971,7 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                             ],
                           ),
                         );
-                      }).toList(),
+                      }),
                     ],
                   ),
                 ),
@@ -534,7 +996,12 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
       decimalDigits: 0,
     );
 
-    // Format the timestamp for "last updated"
+    final isGold = (data['type'] as String?) == 'Gold';
+
+    final pricePerGram = (data['price'] as num).toDouble();
+    final pricePerTola =
+        (data['pricePerTola'] as num?)?.toDouble() ?? (pricePerGram * 11.6638);
+
     String lastUpdated = "";
     if (data['timestamp'] != null) {
       final timestamp = data['timestamp'] as Timestamp;
@@ -542,29 +1009,25 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
       final difference = now.difference(timestamp.toDate());
 
       if (difference.inDays == 0) {
-        // Today
         if (difference.inHours == 0) {
           lastUpdated = "${difference.inMinutes} min ago";
         } else {
           lastUpdated = "${difference.inHours} hrs ago";
         }
       } else if (difference.inDays == 1) {
-        // Yesterday
         lastUpdated = "Yesterday";
       } else {
-        // Days ago
         lastUpdated = "${difference.inDays} days ago";
       }
     }
 
-    // Initialize controller if in edit mode but not yet set
     if (_isEditMode && !_priceControllers.containsKey(document.id)) {
       _priceControllers[document.id] = TextEditingController(
-        text: data['price'].toString(),
+        text:
+            isGold ? pricePerTola.round().toString() : pricePerGram.toString(),
       );
     }
 
-    // More compact card for web
     final isTablet = MediaQuery.of(context).size.width > 600;
     final padding = isTablet ? 8.0 : (isMobile ? 12.0 : 10.0);
 
@@ -594,7 +1057,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
         padding: EdgeInsets.all(padding),
         child: Row(
           children: [
-            // Icon on the left - smaller for web
             Container(
               height: isTablet ? 36 : (isMobile ? 40 : 46),
               width: isTablet ? 36 : (isMobile ? 40 : 46),
@@ -606,20 +1068,17 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
-                Icons.monetization_on,
+                isGold ? Icons.monetization_on : Icons.diamond,
                 color: cardColor,
                 size: isTablet ? 20 : (isMobile ? 22 : 24),
               ),
             ),
             SizedBox(width: isTablet ? 8 : 12),
-
-            // Text content
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Metal name with delete button
                   Row(
                     children: [
                       Expanded(
@@ -636,7 +1095,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      // Show delete button only in edit mode
                       if (_isEditMode)
                         InkWell(
                           onTap:
@@ -657,8 +1115,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                     ],
                   ),
                   SizedBox(height: isTablet ? 2 : 4),
-
-                  // Price input field or text with last updated
                   if (_isEditMode)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
@@ -684,71 +1140,118 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                             width: 1,
                           ),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Currency symbol
-                            Text(
-                              '₹',
-                              style: TextStyle(
-                                fontSize: isTablet ? 13 : (isMobile ? 14 : 16),
-                                fontWeight: FontWeight.bold,
-                                color:
-                                    isDarkMode
-                                        ? Colors.white
-                                        : Colors.grey[800],
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            // Price input
-                            Expanded(
-                              child: TextField(
-                                controller: _priceControllers[document.id],
-                                keyboardType: TextInputType.number,
-                                style: TextStyle(
-                                  fontSize:
-                                      isTablet ? 13 : (isMobile ? 14 : 16),
-                                  fontWeight: FontWeight.bold,
-                                  color:
-                                      isDarkMode
-                                          ? Colors.white
-                                          : Colors.grey[800],
+                            Row(
+                              children: [
+                                Text(
+                                  '₹',
+                                  style: TextStyle(
+                                    fontSize:
+                                        isTablet ? 13 : (isMobile ? 14 : 16),
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white
+                                            : Colors.grey[800],
+                                  ),
                                 ),
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  border: InputBorder.none,
-                                  hintText: 'Enter price',
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _priceControllers[document.id],
+                                    keyboardType: TextInputType.number,
+                                    style: TextStyle(
+                                      fontSize:
+                                          isTablet ? 13 : (isMobile ? 14 : 16),
+                                      fontWeight: FontWeight.bold,
+                                      color:
+                                          isDarkMode
+                                              ? Colors.white
+                                              : Colors.grey[800],
+                                    ),
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                      border: InputBorder.none,
+                                      hintText: 'Enter price',
+                                    ),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
+                                  ),
                                 ),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                              ),
+                              ],
                             ),
+                            if (isGold)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'per tola',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontStyle: FontStyle.italic,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                  ),
+                                ),
+                              )
+                            else
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'per gram',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontStyle: FontStyle.italic,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),
                     )
                   else
                     isTablet
-                        ? // Web/tablet layout - price and date with better spacing
-                        Row(
+                        ? Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // Price on left
-                            Text(
-                              currencyFormat.format(data['price']),
-                              style: TextStyle(
-                                color:
-                                    _isDarkMode(context)
-                                        ? Colors.white
-                                        : Colors.grey[800],
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isGold
+                                      ? currencyFormat.format(pricePerTola)
+                                      : currencyFormat.format(pricePerGram),
+                                  style: TextStyle(
+                                    color:
+                                        _isDarkMode(context)
+                                            ? Colors.white
+                                            : Colors.grey[800],
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  isGold ? 'per tola' : 'per gram',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                  ),
+                                ),
+                              ],
                             ),
-
-                            // Last updated on right with proper alignment
                             if (data['timestamp'] != null)
                               Container(
                                 alignment: Alignment.centerLeft,
@@ -766,24 +1269,37 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
                               ),
                           ],
                         )
-                        : // Mobile layout - price and last updated stacked
-                        Column(
+                        : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Price in large font
-                            Text(
-                              currencyFormat.format(data['price']),
-                              style: TextStyle(
-                                color:
-                                    _isDarkMode(context)
-                                        ? Colors.white
-                                        : Colors.grey[800],
-                                fontSize: isMobile ? 16 : 18,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isGold
+                                      ? currencyFormat.format(pricePerTola)
+                                      : currencyFormat.format(pricePerGram),
+                                  style: TextStyle(
+                                    color:
+                                        _isDarkMode(context)
+                                            ? Colors.white
+                                            : Colors.grey[800],
+                                    fontSize: isMobile ? 16 : 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  isGold ? 'per tola' : 'per gram',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color:
+                                        isDarkMode
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                  ),
+                                ),
+                              ],
                             ),
-
-                            // Last updated below price
                             if (data['timestamp'] != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 3),
@@ -810,7 +1326,6 @@ class _CurrentRatesTabState extends State<CurrentRatesTab> {
     );
   }
 
-  // Helper method to determine if dark mode is active
   bool _isDarkMode(BuildContext context) {
     return Theme.of(context).brightness == Brightness.dark;
   }
@@ -921,10 +1436,9 @@ class HistoryTab extends StatefulWidget {
 }
 
 class _HistoryTabState extends State<HistoryTab> {
-  // Date range for filtering
   DateTime _selectedDate = DateTime.now();
   Map<String, List<ChartData>> _chartDataByType = {};
-  List<Color> _chartColors = [
+  final List<Color> _chartColors = [
     Colors.blue,
     Colors.red,
     Colors.green,
@@ -950,27 +1464,22 @@ class _HistoryTabState extends State<HistoryTab> {
   @override
   void initState() {
     super.initState();
-    // Initialize with 15 days data
     _fetchPriceHistoryData();
   }
 
   Future<void> _fetchPriceHistoryData() async {
-    if (!mounted) return; // Add this check at the start
-
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
     });
 
     try {
-      // Calculate date range
       final DateTime endDate = DateTime.now();
       final DateTime startDate = endDate.subtract(const Duration(days: 15));
 
-      // First get metal types to reduce query load
       final typesSnapshot =
           await FirebaseFirestore.instance.collection('metals').get();
 
-      // Check if still mounted after each async operation
       if (!mounted) return;
 
       if (typesSnapshot.docs.isEmpty) {
@@ -980,26 +1489,22 @@ class _HistoryTabState extends State<HistoryTab> {
         return;
       }
 
-      // Get unique metal names to query
       Set<String> uniqueMetalNames = {};
       for (var doc in typesSnapshot.docs) {
         uniqueMetalNames.add(doc['name'] as String);
       }
 
-      // Process in smaller batches to avoid timeouts
       Map<String, List<ChartData>> chartData = {};
       double maxPrice = 0;
 
-      // Process in batches of 5 metals at a time
       List<String> metalNamesList = uniqueMetalNames.toList();
       for (int i = 0; i < metalNamesList.length; i += 5) {
-        if (!mounted) return; // Check if still mounted in the loop
+        if (!mounted) return;
 
         int end =
             (i + 5 < metalNamesList.length) ? i + 5 : metalNamesList.length;
         List<String> batch = metalNamesList.sublist(i, end);
 
-        // Process each metal in the batch
         for (String metalName in batch) {
           try {
             QuerySnapshot snapshot =
@@ -1010,7 +1515,6 @@ class _HistoryTabState extends State<HistoryTab> {
                     .get();
 
             List<ChartData> dataPoints = [];
-
             for (var doc in snapshot.docs) {
               final data = doc.data() as Map<String, dynamic>;
               if (data['timestamp'] != null) {
@@ -1042,7 +1546,6 @@ class _HistoryTabState extends State<HistoryTab> {
         }
       }
 
-      // Final setState with mounted check
       if (!mounted) return;
       setState(() {
         _chartDataByType = chartData;
@@ -1051,7 +1554,7 @@ class _HistoryTabState extends State<HistoryTab> {
       });
     } catch (e) {
       print('Error fetching price history: $e');
-      if (!mounted) return; // Add this check before setState
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -1060,7 +1563,6 @@ class _HistoryTabState extends State<HistoryTab> {
 
   @override
   Widget build(BuildContext context) {
-    // Get screen dimensions
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 400;
     final isTablet = screenWidth > 600;
@@ -1079,7 +1581,6 @@ class _HistoryTabState extends State<HistoryTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Title and date selection
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1102,7 +1603,6 @@ class _HistoryTabState extends State<HistoryTab> {
 
                 const SizedBox(height: 8),
 
-                // Chart area
                 Container(
                   height: isMobile ? 220 : (isTablet ? 300 : 260),
                   decoration: BoxDecoration(
@@ -1194,14 +1694,12 @@ class _HistoryTabState extends State<HistoryTab> {
                                     reservedSize: 30,
                                     interval: 1,
                                     getTitlesWidget: (value, meta) {
-                                      // Only show every 3rd label on mobile to prevent overlap
                                       if (isMobile &&
                                           value.toInt() % 3 != 0 &&
                                           value.toInt() != 0) {
                                         return const SizedBox();
                                       }
 
-                                      // Find the first type with data
                                       final firstType =
                                           _chartDataByType.keys.first;
                                       final dataList =
@@ -1219,8 +1717,13 @@ class _HistoryTabState extends State<HistoryTab> {
                                               dataList[value.toInt()].date,
                                               style: TextStyle(
                                                 color:
-                                                    isDarkMode
-                                                        ? Colors.white70
+                                                    meta.axisSide ==
+                                                            AxisSide.bottom
+                                                        ? isDarkMode
+                                                            ? Colors.white70
+                                                            : Colors
+                                                                .grey
+                                                                .shade700
                                                         : Colors.grey.shade700,
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: isMobile ? 9 : 10,
@@ -1288,7 +1791,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                     List<LineBarSpot> touchedSpots,
                                   ) {
                                     return touchedSpots.map((spot) {
-                                      // Find which metal type this spot belongs to
                                       String? metalType;
                                       for (var entry
                                           in _chartDataByType.entries) {
@@ -1323,7 +1825,6 @@ class _HistoryTabState extends State<HistoryTab> {
                           ),
                 ),
 
-                // Legend for chart lines
                 if (_chartDataByType.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12),
@@ -1381,7 +1882,6 @@ class _HistoryTabState extends State<HistoryTab> {
                     ),
                   ),
 
-                // Date selector
                 Expanded(
                   child: Container(
                     padding: EdgeInsets.all(isMobile ? 10 : 16),
@@ -1400,7 +1900,6 @@ class _HistoryTabState extends State<HistoryTab> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Title and date picker row
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -1413,8 +1912,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                     isDarkMode ? Colors.white : Colors.black87,
                               ),
                             ),
-
-                            // Date selector
                             InkWell(
                               onTap: () async {
                                 final DateTime? picked = await showDatePicker(
@@ -1488,12 +1985,9 @@ class _HistoryTabState extends State<HistoryTab> {
 
                         const SizedBox(height: 12),
 
-                        // Historical prices with FutureBuilder instead of StreamBuilder for better control
                         Expanded(
                           child: FutureBuilder<QuerySnapshot>(
-                            // Filter query by the selected date
                             future: () {
-                              // Create date range for the selected date (start of day to end of day)
                               final startOfDay = DateTime(
                                 _selectedDate.year,
                                 _selectedDate.month,
@@ -1509,7 +2003,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                 999,
                               );
 
-                              // Convert to Firestore timestamps
                               final startTimestamp = Timestamp.fromDate(
                                 startOfDay,
                               );
@@ -1529,7 +2022,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                   .get();
                             }(),
                             builder: (context, snapshot) {
-                              // Loading state
                               if (snapshot.connectionState ==
                                   ConnectionState.waiting) {
                                 return const Center(
@@ -1537,7 +2029,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                 );
                               }
 
-                              // Error handling
                               if (snapshot.hasError) {
                                 print(
                                   "Error loading historical prices: ${snapshot.error}",
@@ -1575,7 +2066,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                 );
                               }
 
-                              // No data state - specifically for selected date
                               if (!snapshot.hasData ||
                                   snapshot.data!.docs.isEmpty) {
                                 return Center(
@@ -1605,7 +2095,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                       const SizedBox(height: 16),
                                       ElevatedButton.icon(
                                         onPressed: () {
-                                          // Reset to today's date
                                           setState(() {
                                             _selectedDate = DateTime.now();
                                           });
@@ -1625,10 +2114,8 @@ class _HistoryTabState extends State<HistoryTab> {
                                 );
                               }
 
-                              // Rest of your existing code for displaying data
                               final metals = snapshot.data!.docs;
 
-                              // Group metals by type
                               Map<String, List<DocumentSnapshot>>
                               groupedMetals = {};
                               for (var metal in metals) {
@@ -1641,7 +2128,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                 groupedMetals[type]!.add(metal);
                               }
 
-                              // Create scrollable list of metal types and prices
                               return ListView(
                                 children:
                                     groupedMetals.entries.map((entry) {
@@ -1649,7 +2135,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          // Type header
                                           Container(
                                             margin: const EdgeInsets.only(
                                               bottom: 8,
@@ -1675,8 +2160,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                               ),
                                             ),
                                           ),
-
-                                          // Metal price cards with wrapping layout
                                           Wrap(
                                             spacing: 10,
                                             runSpacing: 10,
@@ -1693,10 +2176,7 @@ class _HistoryTabState extends State<HistoryTab> {
                                                     data['price'] as num,
                                                     data['timestamp']
                                                         as Timestamp?,
-                                                    _getColorForType(
-                                                      entry.key,
-                                                      opacity: 0.1,
-                                                    ),
+                                                    _getColorForType(entry.key),
                                                     isTablet
                                                         ? 160
                                                         : (isMobile
@@ -1705,7 +2185,6 @@ class _HistoryTabState extends State<HistoryTab> {
                                                   );
                                                 }).toList(),
                                           ),
-
                                           const SizedBox(height: 8),
                                         ],
                                       );
@@ -1733,7 +2212,6 @@ class _HistoryTabState extends State<HistoryTab> {
     _chartDataByType.forEach((type, dataPoints) {
       final spots = <FlSpot>[];
 
-      // Convert data points to spots
       for (int i = 0; i < dataPoints.length; i++) {
         spots.add(FlSpot(i.toDouble(), dataPoints[i].price));
       }
@@ -1763,7 +2241,6 @@ class _HistoryTabState extends State<HistoryTab> {
           ),
         ),
       );
-
       result.add(barData);
       colorIndex++;
     });
@@ -1799,7 +2276,6 @@ class _HistoryTabState extends State<HistoryTab> {
       decimalDigits: 0,
     );
 
-    // Calculate how many days ago this price was recorded
     String timeAgo = '';
     if (timestamp != null) {
       final now = DateTime.now();
@@ -1828,7 +2304,6 @@ class _HistoryTabState extends State<HistoryTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Metal name
           Text(
             name,
             style: TextStyle(
@@ -1838,10 +2313,7 @@ class _HistoryTabState extends State<HistoryTab> {
             ),
             overflow: TextOverflow.ellipsis,
           ),
-
           const SizedBox(height: 6),
-
-          // Price
           Text(
             currencyFormat.format(price),
             style: TextStyle(
@@ -1850,10 +2322,7 @@ class _HistoryTabState extends State<HistoryTab> {
               color: isDarkMode ? Colors.white : Colors.black,
             ),
           ),
-
           const SizedBox(height: 4),
-
-          // Timestamp
           if (timestamp != null)
             Row(
               children: [
@@ -1884,4 +2353,47 @@ class ChartData {
   final Timestamp timestamp;
 
   ChartData(this.date, this.price, this.timestamp);
+}
+
+// Gold rate scheme model
+class GoldRateScheme {
+  final String id;
+  final String name;
+  final double rate24K;
+  final Map<String, double> purityFactors;
+
+  GoldRateScheme({
+    required this.id,
+    required this.name,
+    required this.rate24K,
+    required this.purityFactors,
+  });
+
+  // Default purity factors
+  static Map<String, double> defaultPurityFactors = {
+    '24K': 1.0,
+    '22K': 0.916, // 22/24
+    '18K': 0.750, // 18/24
+    '14K': 0.583, // 14/24
+  };
+
+  factory GoldRateScheme.fromMap(Map<String, dynamic> map) {
+    return GoldRateScheme(
+      id: map['id'] ?? '',
+      name: map['name'] ?? '',
+      rate24K: (map['rate24K'] as num).toDouble(),
+      purityFactors: Map<String, double>.from(
+        map['purityFactors'] ?? defaultPurityFactors,
+      ),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'rate24K': rate24K,
+      'purityFactors': purityFactors,
+    };
+  }
 }
